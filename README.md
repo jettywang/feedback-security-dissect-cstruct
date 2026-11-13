@@ -284,6 +284,37 @@ assert example.magic == 1337
 assert example.data == b"arbitrary length data"
 ```
 
+### Fidelity editing (forensic in-place edits)
+Re-serializing a modified object with `dumps()` rebuilds the whole record: alignment padding is zeroed and the
+inactive members of a union are overwritten. When you only want to change a single field while keeping every other
+byte of an evidence record intact, use a fidelity edit instead. It patches a copy of the original bytes in place,
+so only the byte windows of the fields that actually change are rewritten.
+
+```python
+from dissect.cstruct import cstruct
+
+cs = cstruct().load("""
+struct record {
+    uint8   tag;    // 0x00
+    uint32  value;  // 0x04, with 3 bytes of padding at 0x01-0x03
+    uint16  n;      // 0x08, with 2 bytes of tail padding at 0x0a-0x0b
+};
+""", align=True)
+
+original = bytes.fromhex("AA 11 22 33 BB CC CC CC DD DD EE EE")  # note the non-zero padding
+record = cs.record(original)
+
+result = record.fidelity_edit({"value": 0x11223344})
+result.data  # AA 11 22 33 44 33 22 11 DD DD EE EE  <- padding preserved, only `value` changed
+result.diff()  # byte-by-byte report of exactly which bytes the user modification touched
+```
+
+Nested structures, fixed arrays, anonymous unions and bit fields are all supported, with each change attributed to
+its owning field. A fidelity edit can never move bytes: if the record contains a dynamic-length field, or a fixed
+array would grow or shrink, a `LayoutPreservationError` is raised rather than silently rearranging the layout. When
+an object was not parsed from a seekable record (so its original bytes could not be captured), pass them explicitly
+with `fidelity_edit(record, changes, original=raw_bytes)`.
+
 ### Custom definition parsers
 Don't like the C-like definition syntax? Write your own syntax parser!
 

@@ -680,9 +680,11 @@ def test_lazy_compile(cs: cstruct) -> None:
             obj = _object_new(cls)
             obj.a = _value0
             obj.__dynamic_sizes__ = {}
+            _capture0(obj, stream)
             return obj
         obj = _type_call(cls, **{'a': _value0})
         obj.__dynamic_sizes__ = {}
+        _capture0(obj, stream)
         return obj
     """
     assert cs.test._read.__source__ == dedent(expected).strip()

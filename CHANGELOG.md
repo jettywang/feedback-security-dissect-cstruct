@@ -9,6 +9,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Declarative syntax for structures and unions in `dissect.cstruct.declarative`, using classes with type annotations.
+- Fidelity (in-place) editing for parsed records via `dissect.cstruct.fidelity.fidelity_edit` and the
+  `Structure.fidelity_edit` method. It patches a copy of the original bytes so only the windows of the fields
+  that changed are rewritten, preserving alignment padding, anonymous union storage and every other unmodified
+  byte. Edits that would change the layout (dynamic-sized structures or growing/shrinking a fixed array) raise
+  `LayoutPreservationError` instead of silently rearranging the record. Both the interpreted and compiled read
+  paths capture the original bytes for this purpose.
 
 ### Changed
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import warnings
+import weakref
 from collections import ChainMap
 from collections.abc import MutableMapping
 from contextlib import contextmanager
@@ -34,6 +35,77 @@ if TYPE_CHECKING:
     from typing_extensions import Self
 
     from dissect.cstruct.cstruct import Endianness
+    from dissect.cstruct.fidelity import FidelityResult
+
+
+def _capture_fidelity_buffer(obj: Structure, stream: BinaryIO, start: int) -> None:
+    """Remember the raw bytes a structure was parsed from, so fidelity edits can patch them in place.
+
+    The buffer is kept in a side table keyed by object identity rather than on ``__dict__``, so it never
+    changes the object's visible state or its serialization. Non-seekable streams (e.g. a pipe) cannot be
+    rewound; in that case nothing is captured and the caller must pass the original record explicitly to
+    :func:`dissect.cstruct.fidelity.fidelity_edit`.
+    """
+    if obj.__class__.__size__ is None:
+        return
+
+    try:
+        end = stream.tell()
+        if end < start:
+            return
+        stream.seek(start)
+        buf = stream.read(end - start)
+        stream.seek(end)
+    except (OSError, EOFError, AttributeError):
+        return
+
+    set_fidelity_buffer(obj, buf)
+
+
+def _capture_fidelity_buffer_here(obj: Structure, stream: BinaryIO) -> None:
+    """Capture the original bytes of a fully-read static structure from the stream's current position.
+
+    This variant derives the read start itself (``tell() - size``), which lets the compiled reader record
+    fidelity buffers without forcing an extra ``tell()`` into its hot path. It is a no-op on streams that
+    don't support seeking.
+    """
+    size = obj.__class__.__size__
+    if size is None:
+        return
+
+    try:
+        end = stream.tell()
+        start = end - size
+        if start < 0:
+            return
+        stream.seek(start)
+        buf = stream.read(size)
+        stream.seek(end)
+    except (OSError, EOFError, AttributeError):
+        return
+
+    set_fidelity_buffer(obj, buf)
+
+
+def set_fidelity_buffer(obj: Structure, buf: bytes) -> None:
+    """Associate an original byte record with a parsed structure for later fidelity edits."""
+    if id(obj) in _FIDELITY_BUFFERS:
+        _FIDELITY_BUFFERS[id(obj)] = buf
+        return
+
+    _FIDELITY_BUFFERS[id(obj)] = buf
+    weakref.finalize(obj, _FIDELITY_BUFFERS.pop, id(obj), None)
+
+
+def get_fidelity_buffer(obj: Structure) -> bytes | None:
+    """Return the original byte record captured for a parsed structure, if any."""
+    return _FIDELITY_BUFFERS.get(id(obj))
+
+
+# Side table of original parse buffers: object id -> raw bytes.
+# Kept out of ``__dict__`` so fidelity bookkeeping is invisible to equality checks, repr and serialization.
+# Entries are removed automatically when the parsed object is garbage collected.
+_FIDELITY_BUFFERS: dict[int, bytes] = {}
 
 
 class Field:
@@ -286,6 +358,7 @@ class StructureMetaType(MetaType):
         # This is faster than calling cls() and bypasses the metaclass __call__ method
         obj = type.__call__(cls, **result)
         obj.__dynamic_sizes__ = sizes
+        _capture_fidelity_buffer(obj, stream, struct_start)
         return obj
 
     def _read_0(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> list[Self]:  # type: ignore
@@ -538,6 +611,29 @@ class Structure(BaseType, metaclass=StructureMetaType):
         # Structures created from values instead of parsed have no dynamic sizes
         return ChainMap(self.__class__.__static_sizes__, getattr(self, "__dynamic_sizes__", {}))
 
+    def fidelity_edit(
+        self,
+        changes: Mapping[str, Any] | None = None,
+        *,
+        original: bytes | bytearray | memoryview | None = None,
+        endian: Endianness | None = None,
+    ) -> FidelityResult:
+        """Apply field changes while preserving every unmodified byte of the parsed record.
+
+        This is a thin wrapper around :func:`dissect.cstruct.fidelity.fidelity_edit`. Re-serializing with
+        :meth:`dumps` rebuilds the whole object and zeroes padding and inactive union bytes; a fidelity edit
+        instead patches a copy of the original bytes in place and refuses (via
+        :class:`~dissect.cstruct.exception.LayoutPreservationError`) any change that would move bytes.
+        """
+        from dissect.cstruct.fidelity import fidelity_edit
+
+        return fidelity_edit(self, changes, original=original, endian=endian)
+
+    @property
+    def fidelity_buffer(self) -> bytes | None:
+        """The raw bytes this structure was parsed from, if available for a fidelity edit."""
+        return get_fidelity_buffer(self)
+
 
 class StructureValuesProxy(MutableMapping):
     """A proxy for the values of fields of a Structure."""
@@ -671,6 +767,7 @@ class UnionMetaType(StructureMetaType):
             obj.__dict__.update(result)
             object.__setattr__(obj, "__dynamic_sizes__", sizes)
             object.__setattr__(obj, "_buf", buf)
+            set_fidelity_buffer(obj, buf)
             object.__setattr__(obj, "_endian", endian)
             obj._proxify()
             return obj
@@ -687,6 +784,8 @@ class UnionMetaType(StructureMetaType):
         obj: Union = type.__call__(cls, **result)
         object.__setattr__(obj, "__dynamic_sizes__", sizes)
         object.__setattr__(obj, "_buf", buf)
+        if cls.__size__ is not None:
+            set_fidelity_buffer(obj, buf)
         object.__setattr__(obj, "_endian", endian)
 
         if cls.__size__ is not None:

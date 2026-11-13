@@ -5,11 +5,18 @@ from dissect.cstruct.cstruct import cstruct, ctypes, ctypes_type
 from dissect.cstruct.dump import dumpstruct, hexdump
 from dissect.cstruct.exception import (
     Error,
+    LayoutPreservationError,
     NullPointerDereference,
     ParserError,
     ResolveError,
 )
 from dissect.cstruct.expression import Expression
+from dissect.cstruct.fidelity import (
+    ByteChange,
+    FidelityResult,
+    Region,
+    fidelity_edit,
+)
 from dissect.cstruct.types import (
     LEB128,
     Array,
@@ -57,19 +64,23 @@ __all__ = [
     "Array",
     "BaseType",
     "BitBuffer",
+    "ByteChange",
     "Char",
     "CharArray",
     "Enum",
     "Error",
     "Expression",
     "Field",
+    "FidelityResult",
     "Flag",
     "Int",
+    "LayoutPreservationError",
     "MetaType",
     "NullPointerDereference",
     "Packed",
     "ParserError",
     "Pointer",
+    "Region",
     "ResolveError",
     "Structure",
     "Union",
@@ -83,6 +94,7 @@ __all__ = [
     "f16",
     "f32",
     "f64",
+    "fidelity_edit",
     "hexdump",
     "p8",
     "p16",

@@ -31,7 +31,13 @@ from dissect.cstruct.types import (
     WcharArray,
 )
 from dissect.cstruct.types.enum import EnumMetaType
-from dissect.cstruct.types.structure import StructureMetaType, UnionMetaType, UnionProxy
+from dissect.cstruct.types.structure import (
+    StructureMetaType,
+    UnionMetaType,
+    UnionProxy,
+    _capture_fidelity_buffer_here,
+    set_fidelity_buffer,
+)
 from dissect.cstruct.util import ENDIANNESS_TO_BYTEORDER_MAP, _struct
 
 if TYPE_CHECKING:
@@ -240,6 +246,7 @@ _GLOBALS = {
     "_union_read": UnionMetaType._read,
     "_struct_write": StructureMetaType._write,
     "_union_write": UnionMetaType._write,
+    "_set_fidelity_buffer": set_fidelity_buffer,
     "_struct_error": struct.error,
     "_field_bytes": _field_bytes,
     "_array_values": _array_values,
@@ -391,6 +398,12 @@ class _ReadSourceGenerator(_SourceGenerator):
         kwargs = ", ".join(f"{name!r}: {var}" for name, var in self._assigned)
         outro = []
 
+        # Fidelity edits need the original bytes. Capturing them here keeps the compiled read path, which
+        # bypasses __init__, from silently skipping the buffer that the interpreted read always records.
+        # The helper is a no-op on non-seekable streams, so it never changes behavior for those inputs.
+        capture = self._add_symbol(_capture_fidelity_buffer_here, "capture")
+        capture_call = f"{capture}(obj, stream)"
+
         if self._can_construct_directly():
             # Construct the object directly if we're reading the exact structure class we compiled for
             # This bypasses the __init__ method
@@ -399,11 +412,13 @@ class _ReadSourceGenerator(_SourceGenerator):
             for name, var in self._assigned:
                 outro.append(f"    {_set_attribute('obj', name, var)}")
             outro.append(f"    obj.__dynamic_sizes__ = {sizes}")
+            outro.append(f"    {capture_call}")
             outro.append("    return obj")
 
         # Using type.__call__ directly calls the __init__ method of the class
         outro.append(f"obj = _type_call(cls, **{{{kwargs}}})")
         outro.append(f"obj.__dynamic_sizes__ = {sizes}")
+        outro.append(capture_call)
         outro.append("return obj")
 
         code = indent("\n".join([*preamble, read_code, *outro]), "    ")
@@ -690,6 +705,7 @@ class _ReadSourceGenerator(_SourceGenerator):
 
         lines.append(f"_object_setattr({var}, '__dynamic_sizes__', {{}})")
         lines.append(f"_object_setattr({var}, '_buf', {data})")
+        lines.append(f"_set_fidelity_buffer({var}, {data})")
         lines.append(f"_object_setattr({var}, '_endian', endian)")
         self._proxify(var, var, fields, lines)
 

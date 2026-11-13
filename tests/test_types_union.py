@@ -698,6 +698,7 @@ def test_compiled_union_source(cs: cstruct) -> None:
         _object_setattr(obj, 'd', _object0)
         _object_setattr(obj, '__dynamic_sizes__', {})
         _object_setattr(obj, '_buf', buf)
+        _set_fidelity_buffer(obj, buf)
         _object_setattr(obj, '_endian', endian)
         _nested0 = _getattr(obj, 'd')
         _object_setattr(obj, 'd', _UnionProxy(obj, 'd', _nested0))
