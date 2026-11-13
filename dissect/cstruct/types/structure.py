@@ -14,6 +14,7 @@ from types import FunctionType
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from dissect.cstruct.bitbuffer import BitBuffer
+from dissect.cstruct.context import _inherit_read_context, _strip_read_context
 from dissect.cstruct.expression import Expression
 from dissect.cstruct.lexer import IDENTIFIER_TYPES
 from dissect.cstruct.types.base import (
@@ -242,7 +243,7 @@ class StructureMetaType(MetaType):
         bit_buffer = None
         struct_start = stream.tell()
 
-        result = {}
+        result = _inherit_read_context({}, context)
         sizes = {}
         for field in cls.__fields__:
             offset = stream.tell()
@@ -284,7 +285,7 @@ class StructureMetaType(MetaType):
 
         # Using type.__call__ directly calls the __init__ method of the class
         # This is faster than calling cls() and bypasses the metaclass __call__ method
-        obj = type.__call__(cls, **result)
+        obj = type.__call__(cls, **_strip_read_context(result))
         obj.__dynamic_sizes__ = sizes
         return obj
 
@@ -629,7 +630,7 @@ class UnionMetaType(StructureMetaType):
     def _read_fields(
         cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness
     ) -> tuple[dict[str, Any], dict[str, int]]:
-        result = {}
+        result = _inherit_read_context({}, context)
         sizes = {}
 
         if cls.__size__ is None:
@@ -665,10 +666,10 @@ class UnionMetaType(StructureMetaType):
         elif "__init__" in cls.__dict__ and cls.__new__ is object.__new__:
             # Fast path for static unions
             buf = stream.read(cls.__size__)
-            result, sizes = cls._read_fields(io.BytesIO(buf), endian=endian)
+            result, sizes = cls._read_fields(io.BytesIO(buf), context=context, endian=endian)
 
             obj: Union = object.__new__(cls)
-            obj.__dict__.update(result)
+            obj.__dict__.update(_strip_read_context(result))
             object.__setattr__(obj, "__dynamic_sizes__", sizes)
             object.__setattr__(obj, "_buf", buf)
             object.__setattr__(obj, "_endian", endian)
@@ -684,7 +685,7 @@ class UnionMetaType(StructureMetaType):
         # This is faster than calling cls() and bypasses the metaclass __call__ method
         # It also makes it easier to differentiate between user-initialization of the class
         # and initialization from a stream read
-        obj: Union = type.__call__(cls, **result)
+        obj: Union = type.__call__(cls, **_strip_read_context(result))
         object.__setattr__(obj, "__dynamic_sizes__", sizes)
         object.__setattr__(obj, "_buf", buf)
         object.__setattr__(obj, "_endian", endian)

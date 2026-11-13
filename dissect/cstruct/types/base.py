@@ -7,6 +7,7 @@ from io import SEEK_CUR, BytesIO
 from types import MethodType
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, TypeVar
 
+from dissect.cstruct.context import _context_dict
 from dissect.cstruct.exception import ArraySizeError
 from dissect.cstruct.expression import Expression
 from dissect.cstruct.util import classproperty, normalize_endianness
@@ -16,6 +17,7 @@ if TYPE_CHECKING:
 
     from typing_extensions import Self
 
+    from dissect.cstruct.context import ReadContext
     from dissect.cstruct.cstruct import AllowedEndianness, Endianness, cstruct
 
 
@@ -98,39 +100,55 @@ class MetaType(type):
         """Return the default value of this type."""
         return cls()
 
-    def reads(cls, data: bytes | memoryview | bytearray, *, endian: AllowedEndianness | None = None) -> Self:  # type: ignore
+    def reads(
+        cls,
+        data: bytes | memoryview | bytearray,
+        *,
+        endian: AllowedEndianness | None = None,
+        read_context: ReadContext | None = None,
+    ) -> Self:  # type: ignore
         """Parse the given data from a bytes-like object.
 
         Args:
             data: Bytes-like object to parse.
             endian: The endianness to use when parsing (little, big, network, <, >, !, @ or =).
                     When omitted, the cstruct instance's current endianness is used.
+            read_context: Optional :class:`ReadContext` constraining pointer dereferences
+                          to a region of the input.
 
         Returns:
             The parsed value of this type.
         """
         endian = normalize_endianness(endian) if endian is not None else cls.__cs__.endian
-        return cls._read(BytesIO(data), endian=endian)
+        return cls._read(BytesIO(data), context=_context_dict(read_context), endian=endian)
 
-    def read(cls, obj: BinaryIO | bytes | memoryview | bytearray, *, endian: AllowedEndianness | None = None) -> Self:  # type: ignore
+    def read(
+        cls,
+        obj: BinaryIO | bytes | memoryview | bytearray,
+        *,
+        endian: AllowedEndianness | None = None,
+        read_context: ReadContext | None = None,
+    ) -> Self:  # type: ignore
         """Parse the given data.
 
         Args:
             obj: Data to parse. Can be a bytes-like object or a file-like object.
             endian: The endianness to use when parsing (little, big, network, <, >, !, @ or =).
                     When omitted, the cstruct instance's current endianness is used.
+            read_context: Optional :class:`ReadContext` constraining pointer dereferences
+                          to a region of the input.
 
         Returns:
             The parsed value of this type.
         """
         if _is_buffer_type(obj):
-            return cls.reads(obj, endian=endian)
+            return cls.reads(obj, endian=endian, read_context=read_context)
 
         if not hasattr(obj, "read"):
             raise TypeError("Invalid object type")
 
         endian = normalize_endianness(endian) if endian is not None else cls.__cs__.endian
-        return cls._read(obj, endian=endian)
+        return cls._read(obj, context=_context_dict(read_context), endian=endian)
 
     def write(cls, stream: BinaryIO, value: Any, *, endian: AllowedEndianness | None = None) -> int:
         """Write a value to a writable file-like object.

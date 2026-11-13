@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 from dissect.cstruct.bitbuffer import BitBuffer
+from dissect.cstruct.context import ReadContext
 from dissect.cstruct.cstruct import cstruct, ctypes, ctypes_type
 from dissect.cstruct.dump import dumpstruct, hexdump
 from dissect.cstruct.exception import (
     Error,
     NullPointerDereference,
     ParserError,
+    PointerBoundsError,
+    PointerDepthError,
     ResolveError,
 )
 from dissect.cstruct.expression import Expression
@@ -70,6 +73,9 @@ __all__ = [
     "Packed",
     "ParserError",
     "Pointer",
+    "PointerBoundsError",
+    "PointerDepthError",
+    "ReadContext",
     "ResolveError",
     "Structure",
     "Union",

@@ -12,6 +12,7 @@ from operator import itemgetter
 from textwrap import indent
 from typing import TYPE_CHECKING, Any
 
+from dissect.cstruct.context import _inherit_read_context
 from dissect.cstruct.exception import ArraySizeError, ExpressionParserError
 from dissect.cstruct.expression import SOURCE_GLOBALS, Expression
 from dissect.cstruct.types import (
@@ -244,6 +245,7 @@ _GLOBALS = {
     "_field_bytes": _field_bytes,
     "_array_values": _array_values,
     "_or_default": _or_default,
+    "_inherit_read_context": _inherit_read_context,
     **SOURCE_GLOBALS,
 }
 
@@ -352,7 +354,7 @@ class _ReadSourceGenerator(_SourceGenerator):
         if not self._has_context:
             self._has_context = True
             items = ", ".join(f"{name!r}: {var}" for name, var in self._assigned)
-            lines.append(f"values = {{{items}}}")
+            lines.append(f"values = _inherit_read_context({{{items}}}, context)")
 
         return "values"
 

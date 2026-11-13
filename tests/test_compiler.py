@@ -206,7 +206,7 @@ def test_generate_packed_read_composite_types(cs: cstruct, TestEnum: type[Enum])
     _enum_value = data[0]
     if (_member := _type0._value2member_map_.get(_enum_value)) is None: _member = _type_call(_type0, _enum_value)
     _value0 = _member
-    values = {'a': _value0}
+    values = _inherit_read_context({'a': _value0}, context)
     _value1 = values['b'] = _type1.__new__(_type1, data[1], stream, context=values, endian=endian)
     _value2 = values['c'] = _type_call(_type2, list(map(_type_call, _repeat(_type0), data[2:4])))
     """
@@ -237,7 +237,7 @@ def test_generate_structure_read(cs: cstruct) -> None:
     code = next(read_generator(cs, [field])._generate_field_source(field))
 
     expected = """
-    values = {}
+    values = _inherit_read_context({}, context)
     _offset = stream.tell()
     _value0 = values['a'] = _type0._read(stream, context=values, endian=endian)
     sizes['a'] = stream.tell() - _offset
@@ -251,7 +251,7 @@ def test_generate_structure_read_anonymous(cs: cstruct) -> None:
     code = next(read_generator(cs, [field])._generate_field_source(field))
 
     expected = """
-    values = {}
+    values = _inherit_read_context({}, context)
     _offset = stream.tell()
     _value0 = values['a'] = _type0._read(stream, context=values, endian=endian)
     sizes['a'] = stream.tell() - _offset
@@ -265,7 +265,7 @@ def test_generate_array_read(cs: cstruct) -> None:
     code = next(read_generator(cs, [field])._generate_field_source(field))
 
     expected = """
-    values = {}
+    values = _inherit_read_context({}, context)
     _offset = stream.tell()
     _value0 = values['a'] = _type0._read(stream, context=values, endian=endian)
     sizes['a'] = stream.tell() - _offset
@@ -336,7 +336,7 @@ def test_generate_fields_dynamic_after_bitfield(cs: cstruct, TestEnum: Enum, oth
 
     stream.seek(start + 3)
 
-    values = {{'size': _value0, 'a': _value1, 'b': _value2}}
+    values = _inherit_read_context({{'size': _value0, 'a': _value1, 'b': _value2}}, context)
     _count = max(0, int(_value0))
     _offset = stream.tell()
     _value3 = values['c'] = _type_call(_type4, _type5._read_array(stream, _count, context=values, endian=endian))
@@ -381,7 +381,7 @@ def test_generate_fields_dynamic_before_bitfield(cs: cstruct, TestEnum: Enum, ot
 
     stream.seek(start + 3)
 
-    values = {{'size': _value0, 'a': _value1, 'b': _value2}}
+    values = _inherit_read_context({{'size': _value0, 'a': _value1, 'b': _value2}}, context)
     _count = max(0, int(_value0))
     _offset = stream.tell()
     _value3 = values['c'] = _type_call(_type4, _type5._read_array(stream, _count, context=values, endian=endian))

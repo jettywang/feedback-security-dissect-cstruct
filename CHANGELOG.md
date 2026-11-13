@@ -9,6 +9,11 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Declarative syntax for structures and unions in `dissect.cstruct.declarative`, using classes with type annotations.
+- Optional `ReadContext` for `read` and `reads`, constraining pointer dereferences to a caller-specified range of the input stream. Nested pointers and string pointers inherit the constraint, chained dereferences are bounded by an explicit depth policy, and accessed intervals are recorded.
+
+### Fixed
+
+- Restore the original stream position when a pointer dereference raises an error.
 
 ### Changed
 

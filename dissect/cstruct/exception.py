@@ -21,6 +21,14 @@ class NullPointerDereference(Error):
     pass
 
 
+class PointerBoundsError(Error):
+    pass
+
+
+class PointerDepthError(Error):
+    pass
+
+
 class ArraySizeError(Error):
     pass
 

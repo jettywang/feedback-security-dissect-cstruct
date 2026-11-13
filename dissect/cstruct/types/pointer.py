@@ -3,7 +3,8 @@ from __future__ import annotations
 from functools import cache
 from typing import TYPE_CHECKING, Any, BinaryIO, Generic, TypeVar
 
-from dissect.cstruct.exception import NullPointerDereference
+from dissect.cstruct.context import _READ_CONTEXT_KEY
+from dissect.cstruct.exception import NullPointerDereference, PointerDepthError
 from dissect.cstruct.types.base import BaseType, normalize_endianness
 from dissect.cstruct.types.char import Char
 from dissect.cstruct.types.void import Void
@@ -97,6 +98,12 @@ class Pointer(int, BaseType, Generic[T]):
     def dereference(self, *, endian: AllowedEndianness | None = None) -> T | None:
         """Dereference the pointer and read the value it points to.
 
+        If the pointer was read with a :class:`ReadContext`, the target (after any pointer
+        arithmetic) and the statically known read length are validated against its bounds, and
+        nested pointers and strings read from the value inherit the same constraints.
+
+        The original stream position is always restored, also when reading fails.
+
         Args:
             endian: Optional endianness to use when reading the value.
                     If not provided, the endianness used when reading the pointer itself will be used.
@@ -108,15 +115,37 @@ class Pointer(int, BaseType, Generic[T]):
         if issubclass(self.__type__, Void):
             return None
 
+        read_context = self.__context.get(_READ_CONTEXT_KEY) if self.__context else None
+
+        stream = self.__stream
+        context = self.__context
+        if read_context is not None:
+            # Chained dereferences of nested pointers are bounded by an explicit depth policy,
+            # so that cyclic references stop instead of recursing forever
+            if read_context.depth >= read_context.max_depth:
+                raise PointerDepthError(
+                    f"Pointer dereference chain exceeded the maximum depth of {read_context.max_depth}"
+                )
+
+            # Check the target of the pointer (after any arithmetic) and the statically known
+            # read length against the bounds, not just the starting offset
+            read_context.check(self, self.__type__.__size__ or 0)
+
+            # Nested pointers and string pointers inherit the same range constraint
+            context = {**(context or {}), _READ_CONTEXT_KEY: read_context.derive()}
+            stream = read_context.bounded_stream(stream)
+
         position = self.__stream.tell()
-        self.__stream.seek(self)
+        try:
+            stream.seek(self)
+            if issubclass(self.__type__, Char):
+                # This makes the assumption that a char pointer is a null-terminated string
+                return self.__type__._read_0(stream, context=context, endian=endian)
+            return self.__type__._read(stream, context=context, endian=endian)
+        finally:
+            if read_context is not None and (end := self.__stream.tell()) > self:
+                # Record the interval that was accessed, even if reading failed halfway
+                read_context.record(int(self), end)
 
-        if issubclass(self.__type__, Char):
-            # This makes the assumption that a char pointer is a null-terminated string
-            value = self.__type__._read_0(self.__stream, context=self.__context, endian=endian)
-        else:
-            value = self.__type__._read(self.__stream, context=self.__context, endian=endian)
-
-        # Restore the stream position after reading the value
-        self.__stream.seek(position)
-        return value
+            # Restore the stream position after reading the value
+            self.__stream.seek(position)
