@@ -1,0 +1,11 @@
+# verdict: diverge
+# reason: error semantics differ: compiled ('read', 'EOFError', 'EOFError(expected 12)') vs interpreted ('read', 'EOFError', 'EOFError(expected 4)')
+# stage: 4
+# payload_hex: c5d71484f8
+# --- definition ---
+#define SEED 1
+struct inner { uint32 a; uint32 b; };
+struct outer {
+    inner x;
+    uint32 c;
+};

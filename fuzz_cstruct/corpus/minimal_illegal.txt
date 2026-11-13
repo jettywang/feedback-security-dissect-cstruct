@@ -1,0 +1,10 @@
+# verdict: illegal
+# reason: both reject at read with UnknownIdentifierError: input is invalid
+# stage: 3
+# payload_hex: 01000000c5d71484
+# --- definition ---
+#define SEED 1
+struct S {
+    uint32 n;
+    uint8 data[nope];
+};

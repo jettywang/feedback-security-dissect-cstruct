@@ -1,0 +1,10 @@
+# verdict: illegal
+# reason: both reject at load with ResolveError: input is invalid
+# stage: 2
+# payload_hex: b18af1e08b3f8b06
+# --- definition ---
+#define SEED 1
+struct node;
+struct node {
+    uint32 x;
+};

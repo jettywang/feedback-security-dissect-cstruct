@@ -1,0 +1,11 @@
+# verdict: illegal
+# reason: both reject at read with UnknownIdentifierError: input is invalid
+# stage: 4
+# payload_hex: 0200000068f46bd1
+# --- definition ---
+#define SEED 1
+struct S {
+    uint16 a;
+    uleb128 rest[n];
+    ileb128 dyn;
+};

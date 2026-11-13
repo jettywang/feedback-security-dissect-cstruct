@@ -1,0 +1,10 @@
+# verdict: dos
+# reason: StreamBudgetExceeded at read (compiled): library requested 1152921504606846976 bytes, cap is 1048576
+# stage: 3
+# payload_hex: 3c000000c5d71484
+# --- definition ---
+#define SEED 1
+struct S {
+    uint32 n;
+    uint8 data[1 << n];
+};
