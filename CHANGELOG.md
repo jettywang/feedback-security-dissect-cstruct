@@ -33,6 +33,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- Structure reads now retry short reads instead of treating them as EOF, so rate-limited streams that return fewer bytes than requested no longer cause subsequent fields to be misaligned. Both the compiled and interpreted read paths consume bytes through the same exact-read logic, and features that require seeking raise an explicit error on non-seekable streams.
 - `dumpstruct` colors the right bytes of structures with padding and unions.
 - Structures and unions no longer share nested structures and arrays between their default values.
 - Unions can be created with default values and read if they have doubly nested structures or nested unions.

@@ -343,7 +343,7 @@ def test_compiled_bits(endian: str) -> None:
         "_bit_buffer = _type0._read(stream, endian=endian)",
         "_value0 = _type_call(_type0, _bit_value)",
         "_value1 = _type_call(_type0, _bit_value)",
-        "buf = stream.read(1)",
+        "buf = _read_exact(stream, 1)",
         "_value2 = _type_call(_type0, data[0])",
     ]
     assert type(compiled.charbits(b"\x12\x34").a) is compiled.uint8

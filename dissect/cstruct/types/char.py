@@ -3,7 +3,15 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from dissect.cstruct.exception import ArraySizeError
-from dissect.cstruct.types.base import EOF, BaseArray, BaseType, _is_seekable, _read_null_terminated
+from dissect.cstruct.types.base import (
+    EOF,
+    _is_seekable,
+    _read_exact,
+    _read_null_terminated,
+    _read_remaining,
+    BaseArray,
+    BaseType,
+)
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -61,9 +69,10 @@ class Char(bytes, BaseType):
         if count == 0:
             return type.__call__(cls, b"")
 
-        data = stream.read(-1 if count == EOF else count)
-        if count != EOF and len(data) != count:
-            raise EOFError(f"Read {len(data)} bytes, but expected {count}")
+        if count == EOF:
+            data = _read_remaining(stream)
+        else:
+            data = _read_exact(stream, count)
 
         return type.__call__(cls, data)
 
@@ -74,10 +83,7 @@ class Char(bytes, BaseType):
 
         buf = []
         while True:
-            byte = stream.read(1)
-            if byte == b"":
-                raise EOFError("Read 0 bytes, but expected 1")
-
+            byte = _read_exact(stream, 1)
             if byte == b"\x00":
                 break
 

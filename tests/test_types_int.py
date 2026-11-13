@@ -232,10 +232,10 @@ def test_int_eof(cs: cstruct) -> None:
     with pytest.raises(EOFError, match="Read 1 bytes, but expected 3"):
         cs.int24(b"\x00")
 
-    with pytest.raises(EOFError, match="Read 0 bytes, but expected 3"):
+    with pytest.raises(EOFError, match="Read 3 bytes, but expected 6"):
         cs.int24[2](b"\x00\x00\x00")
 
-    with pytest.raises(EOFError, match="Read 1 bytes, but expected 3"):
+    with pytest.raises(EOFError, match="Read 4 bytes, but expected 6"):
         cs.int24[2](b"\x00\x00\x00\x00")
 
     with pytest.raises(EOFError, match="Read 0 bytes, but expected 3"):

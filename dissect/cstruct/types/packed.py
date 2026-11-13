@@ -4,7 +4,7 @@ import warnings
 from itertools import repeat
 from typing import TYPE_CHECKING, Any, BinaryIO, Generic, TypeVar
 
-from dissect.cstruct.types.base import EOF, BaseType, MetaType, _is_buffer_type
+from dissect.cstruct.types.base import EOF, _is_buffer_type, _read_exact, _read_remaining, BaseType, MetaType
 from dissect.cstruct.util import _struct, classproperty
 
 if TYPE_CHECKING:
@@ -51,11 +51,7 @@ class Packed(BaseType, Generic[T], metaclass=PackedMetaType):
 
     @classmethod
     def _read(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> Self:
-        data = stream.read(cls.__size__)
-
-        if len(data) != cls.__size__:
-            raise EOFError(f"Read {len(data)} bytes, but expected {cls.__size__}")
-
+        data = _read_exact(stream, cls.__size__)
         return cls.__new__(cls, _struct(endian, cls.__fmt__).unpack(data)[0])
 
     @classmethod
@@ -63,17 +59,14 @@ class Packed(BaseType, Generic[T], metaclass=PackedMetaType):
         cls, stream: BinaryIO, count: int, *, context: dict[str, Any] | None = None, endian: Endianness
     ) -> list[Self]:
         if count == EOF:
-            data = stream.read()
+            data = _read_remaining(stream)
             length = len(data)
             count = length // cls.__size__
         else:
             length = cls.__size__ * count
-            data = stream.read(length)
+            data = _read_exact(stream, length)
 
         fmt = _struct(endian, f"{count}{cls.__fmt__}")
-
-        if len(data) != length:
-            raise EOFError(f"Read {len(data)} bytes, but expected {length}")
 
         return list(map(cls.__new__, repeat(cls), fmt.unpack(data)))
 
@@ -83,10 +76,7 @@ class Packed(BaseType, Generic[T], metaclass=PackedMetaType):
 
         fmt = _struct(endian, cls.__fmt__)
         while True:
-            data = stream.read(cls.__size__)
-
-            if len(data) != cls.__size__:
-                raise EOFError(f"Read {len(data)} bytes, but expected {cls.__size__}")
+            data = _read_exact(stream, cls.__size__)
 
             if (value := fmt.unpack(data)[0]) == 0:
                 break

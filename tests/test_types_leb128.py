@@ -10,7 +10,7 @@ if TYPE_CHECKING:
 
 
 def test_leb128_unsigned_read_EOF(cs: cstruct) -> None:
-    with pytest.raises(EOFError, match="EOF reached, while final LEB128 byte was not yet read"):
+    with pytest.raises(EOFError, match="Read 0 bytes, but expected 1"):
         cs.uleb128(b"\x8b")
 
 

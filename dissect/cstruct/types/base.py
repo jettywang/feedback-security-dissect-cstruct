@@ -3,7 +3,7 @@ from __future__ import annotations
 import contextlib
 import functools
 import warnings
-from io import SEEK_CUR, BytesIO
+from io import SEEK_CUR, BytesIO, UnsupportedOperation
 from types import MethodType
 from typing import TYPE_CHECKING, Any, BinaryIO, ClassVar, TypeVar
 
@@ -191,9 +191,18 @@ class MetaType(type):
         """
         result = []
         if count == EOF:
-            while not _is_eof(stream):
-                result.append(cls._read(stream, context=context, endian=endian))
-            return result
+            if _is_seekable(stream):
+                while not _is_eof(stream):
+                    result.append(cls._read(stream, context=context, endian=endian))
+                return result
+
+            # A non-seekable stream can't be probed and rewound, so rely on the exact reads of each element
+            # to raise an EOFError once the stream is truly exhausted
+            while True:
+                try:
+                    result.append(cls._read(stream, context=context, endian=endian))
+                except EOFError:
+                    return result
 
         # This is purposefully a simple loop
         # PyPy will pre-allocate the list for a list comprehension ahead of time, which will cause huge allocations in
@@ -460,15 +469,87 @@ def _is_seekable(stream: BinaryIO) -> bool:
         return False
 
 
+def _require_seekable(stream: BinaryIO, feature: str) -> None:
+    """Raise a clear error when a feature needs seeking but the stream isn't seekable.
+
+    This keeps non-seekable features from silently dropping or repositioning bytes.
+    """
+    if not _is_seekable(stream):
+        raise UnsupportedOperation(f"{feature} requires a seekable stream")
+
+
+def _read_exact(stream: BinaryIO, size: int) -> bytes:
+    """Read exactly ``size`` bytes from ``stream``, retrying on short reads.
+
+    A stream may return fewer bytes than requested while more data is still in flight (e.g. a rate-limited
+    socket), so a short read is retried instead of being treated as EOF. Only a read that returns no bytes
+    signals a true end of stream.
+
+    Args:
+        stream: The stream to read from.
+        size: The exact amount of bytes to read.
+
+    Raises:
+        EOFError: If the stream ends before ``size`` bytes could be read.
+    """
+    if size <= 0:
+        return b""
+
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            # An empty read is the only reliable signal of a true EOF
+            read = size - remaining
+            raise EOFError(f"Read {read} bytes, but expected {size}")
+
+        chunks.append(chunk)
+        remaining -= len(chunk)
+
+    return chunks[0] if len(chunks) == 1 else b"".join(chunks)
+
+
+def _read_remaining(stream: BinaryIO) -> bytes:
+    """Read every byte left in a stream, tolerating short reads."""
+    chunks = []
+    while True:
+        chunk = stream.read()
+        if not chunk:
+            return b"".join(chunks)
+        chunks.append(chunk)
+
+
+def _read_partial(stream: BinaryIO, size: int) -> bytes:
+    """Read up to ``size`` bytes, retrying short reads but stopping at a true EOF.
+
+    Unlike :func:`_read_exact`, an empty read is a normal end of stream here, so a shorter result than
+    ``size`` is returned instead of raising.
+    """
+    chunks = []
+    remaining = size
+    while remaining:
+        chunk = stream.read(remaining)
+        if not chunk:
+            break
+
+        chunks.append(chunk)
+        remaining -= len(chunk)
+
+    return chunks[0] if len(chunks) == 1 else b"".join(chunks)
+
+
 def _read_null_terminated(stream: BinaryIO, width: int) -> bytes:
     """Read data up to a null terminator of the given width from a seekable stream, in chunks.
 
     Leaves the stream just after the terminator.
     """
+    _require_seekable(stream, "Reading a null-terminated array in chunks")
+
     terminator = b"\x00" * width
     buf = []
     while True:
-        chunk = stream.read(128 * width)
+        chunk = _read_partial(stream, 128 * width)
         if not isinstance(chunk, (bytes, bytearray)):
             # E.g. a memoryview, which doesn't support find()
             chunk = bytes(chunk)
@@ -491,11 +572,16 @@ def _read_null_terminated(stream: BinaryIO, width: int) -> bytes:
 
 
 def _is_eof(stream: BinaryIO) -> bool:
-    """Check if the stream has reached EOF."""
-    pos = stream.tell()
-    stream.read(1)
+    """Check if the stream has reached EOF.
 
-    if stream.tell() == pos:
+    Seekable streams are probed with a single byte that is put back. A non-seekable stream can't put the
+    probe byte back, so reading it until EOF is handled by the type implementations instead.
+    """
+    if not _is_seekable(stream):
+        raise UnsupportedOperation("Detecting EOF requires a seekable stream")
+
+    pos = stream.tell()
+    if not stream.read(1):
         return True
 
     stream.seek(pos)

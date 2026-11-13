@@ -4,7 +4,12 @@ from functools import cache
 from typing import TYPE_CHECKING, Any, BinaryIO, Generic, TypeVar
 
 from dissect.cstruct.exception import NullPointerDereference
-from dissect.cstruct.types.base import BaseType, normalize_endianness
+from dissect.cstruct.types.base import (
+    BaseType,
+    UnsupportedOperation,
+    _require_seekable,
+    normalize_endianness,
+)
 from dissect.cstruct.types.char import Char
 from dissect.cstruct.types.void import Void
 
@@ -108,6 +113,7 @@ class Pointer(int, BaseType, Generic[T]):
         if issubclass(self.__type__, Void):
             return None
 
+        _require_seekable(self.__stream, "Dereferencing a pointer")
         position = self.__stream.tell()
         self.__stream.seek(self)
 

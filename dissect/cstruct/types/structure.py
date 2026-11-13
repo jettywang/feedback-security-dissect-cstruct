@@ -19,10 +19,12 @@ from dissect.cstruct.lexer import IDENTIFIER_TYPES
 from dissect.cstruct.types.base import (
     _BUFFER_TYPES,
     _IMMUTABLE_TYPES,
+    _is_buffer_type,
+    _read_exact,
+    _require_seekable,
     BaseArray,
     BaseType,
     MetaType,
-    _is_buffer_type,
 )
 from dissect.cstruct.types.enum import EnumMetaType
 from dissect.cstruct.types.pointer import Pointer
@@ -240,22 +242,27 @@ class StructureMetaType(MetaType):
 
     def _read(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> Self:  # type: ignore
         bit_buffer = None
-        struct_start = stream.tell()
+        struct_start = None
+
+        if cls.__align__ or any(field.offset for field in cls.__fields__):
+            # These features reposition the stream; refuse non-seekable inputs before touching tell()/seek()
+            _require_seekable(stream, "Reading an aligned structure or fields at specific offsets")
 
         result = {}
         sizes = {}
         for field in cls.__fields__:
-            offset = stream.tell()
+            if field.offset is not None:
+                if struct_start is None:
+                    struct_start = stream.tell()
 
-            if field.offset is not None and offset != struct_start + field.offset:
-                # Field is at a specific offset, either aligned or added that way
-                offset = struct_start + field.offset
-                stream.seek(offset)
-
-            if cls.__align__ and field.offset is None:
+                target = struct_start + field.offset
+                if stream.tell() != target:
+                    # Field is at a specific offset, either aligned or added that way
+                    stream.seek(target)
+            elif cls.__align__:
                 # Previous field was dynamically sized and we need to align
-                offset += -offset & (field.alignment - 1)
-                stream.seek(offset)
+                offset = stream.tell()
+                stream.seek(offset + (-offset & (field.alignment - 1)))
 
             if field.bits:
                 if bit_buffer is None:
@@ -272,6 +279,7 @@ class StructureMetaType(MetaType):
             if bit_buffer is not None:
                 bit_buffer.reset()
 
+            offset = stream.tell()
             value = field.type._read(stream, context=result, endian=endian)
 
             result[field._name] = value
@@ -280,6 +288,7 @@ class StructureMetaType(MetaType):
 
         if cls.__align__:
             # Align the stream
+            _require_seekable(stream, "Reading an aligned structure")
             stream.seek(-stream.tell() & (cls.__alignment__ - 1), io.SEEK_CUR)
 
         # Using type.__call__ directly calls the __init__ method of the class
@@ -633,11 +642,12 @@ class UnionMetaType(StructureMetaType):
         sizes = {}
 
         if cls.__size__ is None:
+            _require_seekable(stream, "Reading a dynamic union")
             offset = stream.tell()
             buf = stream
         else:
             offset = 0
-            buf = io.BytesIO(stream.read(cls.__size__))
+            buf = io.BytesIO(_read_exact(stream, cls.__size__))
 
         for field in cls.__fields__:
             field_type = field.type
@@ -657,14 +667,15 @@ class UnionMetaType(StructureMetaType):
 
     def _read(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> Self:  # type: ignore
         if cls.__size__ is None:
+            _require_seekable(stream, "Reading a dynamic union")
             start = stream.tell()
             result, sizes = cls._read_fields(stream, context=context, endian=endian)
             size = stream.tell() - start
             stream.seek(start)
-            buf = stream.read(size)
+            buf = _read_exact(stream, size)
         elif "__init__" in cls.__dict__ and cls.__new__ is object.__new__:
             # Fast path for static unions
-            buf = stream.read(cls.__size__)
+            buf = _read_exact(stream, cls.__size__)
             result, sizes = cls._read_fields(io.BytesIO(buf), endian=endian)
 
             obj: Union = object.__new__(cls)
@@ -677,7 +688,7 @@ class UnionMetaType(StructureMetaType):
         else:
             result = {}
             sizes = {}
-            buf = stream.read(cls.__size__)
+            buf = _read_exact(stream, cls.__size__)
 
         # Create the object and set the values
         # Using type.__call__ directly calls the __init__ method of the class

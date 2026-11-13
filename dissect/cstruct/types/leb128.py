@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from dissect.cstruct.types.base import BaseType
+from dissect.cstruct.types.base import BaseType, _read_exact
 
 if TYPE_CHECKING:
     from typing_extensions import Self
@@ -23,10 +23,8 @@ class LEB128(int, BaseType):
         result = 0
         shift = 0
         while True:
-            b = stream.read(1)
-            if b == b"":
-                raise EOFError("EOF reached, while final LEB128 byte was not yet read")
-
+            # An exact read distinguishes a true (empty) EOF from a temporary short read
+            b = _read_exact(stream, 1)
             b = ord(b)
             result |= (b & 0x7F) << shift
             shift += 7

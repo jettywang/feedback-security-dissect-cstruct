@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, BinaryIO
 
-from dissect.cstruct.types.base import EOF, BaseType, MetaType
+from dissect.cstruct.types.base import EOF, BaseType, MetaType, _read_exact
 from dissect.cstruct.util import ENDIANNESS_TO_BYTEORDER_MAP
 
 if TYPE_CHECKING:
@@ -18,11 +18,7 @@ class Int(int, BaseType):
 
     @classmethod
     def _read(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> Self:
-        data = stream.read(cls.__size__)
-
-        if len(data) != cls.__size__:
-            raise EOFError(f"Read {len(data)} bytes, but expected {cls.__size__}")
-
+        data = _read_exact(stream, cls.__size__)
         return type.__call__(cls, int.from_bytes(data, ENDIANNESS_TO_BYTEORDER_MAP[endian], signed=cls.signed))
 
     @classmethod
@@ -33,15 +29,12 @@ class Int(int, BaseType):
             return MetaType._read_array(cls, stream, count, context=context, endian=endian)
 
         size = cls.__size__
-        length = size * count
-        data = stream.read(length)
-        if len(data) != length:
-            raise EOFError(f"Read {len(data) % size} bytes, but expected {size}")
+        data = _read_exact(stream, size * count)
 
         byteorder = ENDIANNESS_TO_BYTEORDER_MAP[endian]
         return [
             type.__call__(cls, int.from_bytes(data[i : i + size], byteorder, signed=cls.signed))
-            for i in range(0, length, size)
+            for i in range(0, size * count, size)
         ]
 
     @classmethod

@@ -124,8 +124,7 @@ def test_generate_packed_read(cs: cstruct) -> None:
     code = next(read_generator(cs, fields)._generate_packed_source(fields))
 
     expected = """
-    buf = stream.read(15)
-    if len(buf) != 15: raise EOFError(f"Read {len(buf)} bytes, but expected 15")
+    buf = _read_exact(stream, 15)
     data = _unpack0[endian](buf)
     _value0 = _type_call(_type0, data[0])
     _value1 = _type_call(_type1, data[1])
@@ -146,8 +145,7 @@ def test_generate_packed_read_array(cs: cstruct) -> None:
     code = next(read_generator(cs, fields)._generate_packed_source(fields))
 
     expected = """
-    buf = stream.read(64)
-    if len(buf) != 64: raise EOFError(f"Read {len(buf)} bytes, but expected 64")
+    buf = _read_exact(stream, 64)
     data = _unpack0[endian](buf)
     _value0 = _type_call(_type0, list(map(_type_call, _repeat(_type1), data[0:2])))
     _value1 = _type_call(_type2, list(map(_type_call, _repeat(_type3), data[2:5])))
@@ -170,8 +168,7 @@ def test_generate_packed_read_byte_types(cs: cstruct) -> None:
     code = next(read_generator(cs, fields)._generate_packed_source(fields))
 
     expected = """
-    buf = stream.read(18)
-    if len(buf) != 18: raise EOFError(f"Read {len(buf)} bytes, but expected 18")
+    buf = _read_exact(stream, 18)
     _value0 = _type_call(_type0, buf[0:1])
     _value1 = _type_call(_type1, buf[1:3])
     _value2 = _type_call(_type2, str(buf[3:5], _encoding0[endian], 'surrogatepass'))
@@ -200,8 +197,7 @@ def test_generate_packed_read_composite_types(cs: cstruct, TestEnum: type[Enum])
     code = next(read_generator(cs, fields)._generate_packed_source(fields))
 
     expected = """
-    buf = stream.read(11)
-    if len(buf) != 11: raise EOFError(f"Read {len(buf)} bytes, but expected 11")
+    buf = _read_exact(stream, 11)
     data = _unpack0[endian](buf)
     _enum_value = data[0]
     if (_member := _type0._value2member_map_.get(_enum_value)) is None: _member = _type_call(_type0, _enum_value)
@@ -222,8 +218,7 @@ def test_generate_packed_read_offsets(cs: cstruct) -> None:
     code = next(read_generator(cs, fields)._generate_packed_source(fields))
 
     expected = """
-    buf = stream.read(9)
-    if len(buf) != 9: raise EOFError(f"Read {len(buf)} bytes, but expected 9")
+    buf = _read_exact(stream, 9)
     data = _unpack0[endian](buf)
     _value0 = _type_call(_type0, data[0])
     _value1 = _type_call(_type0, data[1])
@@ -316,8 +311,7 @@ def test_generate_fields_dynamic_after_bitfield(cs: cstruct, TestEnum: Enum, oth
 
     shift = _type.__size__ * 8 - 4
     expected = f"""
-    buf = stream.read(2)
-    if len(buf) != 2: raise EOFError(f"Read {{len(buf)}} bytes, but expected 2")
+    buf = _read_exact(stream, 2)
     data = _unpack0[endian](buf)
     _value0 = _type_call(_type0, data[0])
 
@@ -361,8 +355,7 @@ def test_generate_fields_dynamic_before_bitfield(cs: cstruct, TestEnum: Enum, ot
 
     shift = _type.__size__ * 8 - 4
     expected = f"""
-    buf = stream.read(2)
-    if len(buf) != 2: raise EOFError(f"Read {{len(buf)}} bytes, but expected 2")
+    buf = _read_exact(stream, 2)
     data = _unpack0[endian](buf)
     _value0 = _type_call(_type0, data[0])
 
@@ -515,8 +508,8 @@ def test_inline_nested(inline_cs: tuple[cstruct, cstruct]) -> None:
     # The static part of the header is read at once, including the nested structures and unions
     # Only the fields from the dynamic array onwards are read by their types
     lines = source_lines(inlined.header)
-    assert [line for line in lines if "stream.read(" in line or "._read" in line] == [
-        "buf = stream.read(32)",
+    assert [line for line in lines if "_read_exact(" in line or "._read" in line] == [
+        "buf = _read_exact(stream, 32)",
         "_value5 = values['data'] = _type_call(_type14, _type0._read_array("
         "stream, _count, context=values, endian=endian))",
         "_value6 = values['after'] = _type2._read(stream, context=values, endian=endian)",
@@ -646,7 +639,7 @@ def test_compiled_bits_offset() -> None:
         "_bit_buffer = _type0._read(stream, endian=endian)",
         "_bit_buffer = _type1._read(stream, endian=endian)",
         "_bit_buffer = _type1._read(stream, endian=endian)",
-        "buf = stream.read(5)",
+        "buf = _read_exact(stream, 5)",
     ]
 
     # The interpreted version returns bit fields as plain integers, so only compare the values
@@ -671,8 +664,7 @@ def test_lazy_compile(cs: cstruct) -> None:
     expected = """
     def _read(cls, stream, *, context=None, endian):
 
-        buf = stream.read(4)
-        if len(buf) != 4: raise EOFError(f"Read {len(buf)} bytes, but expected 4")
+        buf = _read_exact(stream, 4)
         data = _unpack0[endian](buf)
         _value0 = _type_call(_type0, data[0])
 

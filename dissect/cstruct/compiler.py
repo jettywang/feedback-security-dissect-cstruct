@@ -30,6 +30,7 @@ from dissect.cstruct.types import (
     Wchar,
     WcharArray,
 )
+from dissect.cstruct.types.base import _read_exact, _require_seekable
 from dissect.cstruct.types.enum import EnumMetaType
 from dissect.cstruct.types.structure import StructureMetaType, UnionMetaType, UnionProxy
 from dissect.cstruct.util import ENDIANNESS_TO_BYTEORDER_MAP, _struct
@@ -241,6 +242,8 @@ _GLOBALS = {
     "_struct_write": StructureMetaType._write,
     "_union_write": UnionMetaType._write,
     "_struct_error": struct.error,
+    "_read_exact": _read_exact,
+    "_require_seekable": _require_seekable,
     "_field_bytes": _field_bytes,
     "_array_values": _array_values,
     "_or_default": _or_default,
@@ -345,6 +348,7 @@ class _ReadSourceGenerator(_SourceGenerator):
         self._assigned: list[tuple[str, str]] = []
         self._has_context = False
         self._uses_start = False
+        self._uses_seek = False
         self._uses_sizes = False
 
     def _context(self, lines: list[str]) -> str:
@@ -382,10 +386,14 @@ class _ReadSourceGenerator(_SourceGenerator):
         if checks := self._modified_checks():
             # Fall back to the non-inlined version if any of the inlined types was modified after compilation
             preamble.append(f"if {' or '.join(checks)}: return {self._fallback()}(cls, stream, context, endian)")
-        if self._uses_sizes:
-            preamble.append("sizes = {}")
+        if self._uses_seek:
+            # Generated offset and alignment handling seeks the stream, so refuse non-seekable inputs explicitly
+            # instead of failing with a generic attribute error or silently repositioning bytes
+            preamble.append("_require_seekable(stream, 'Reading fields with offsets or alignment')")
         if self._uses_start:
             preamble.append("start = stream.tell()")
+        if self._uses_sizes:
+            preamble.append("sizes = {}")
 
         sizes = "sizes" if self._uses_sizes else "{}"
         kwargs = ", ".join(f"{name!r}: {var}" for name, var in self._assigned)
@@ -429,8 +437,7 @@ class _ReadSourceGenerator(_SourceGenerator):
 
         preamble = [
             f"if {' or '.join(checks)}: return _union_read(cls, stream, context=context, endian=endian)",
-            f"buf = stream.read({size})",
-            _check_eof(size),
+            f"buf = _read_exact(stream, {size})",
         ]
         code = indent("\n".join([*preamble, *lines, "return obj"]), "    ")
 
@@ -455,10 +462,12 @@ class _ReadSourceGenerator(_SourceGenerator):
             if field.offset is not None and field.offset != current_offset:
                 # If a field has a set offset and it's not the same as the current tracked offset, seek to it
                 self._uses_start = True
+                self._uses_seek = True
                 yield f"stream.seek(start + {field.offset})"
                 current_offset = field.offset
 
             if self.align and field.offset is None:
+                self._uses_seek = True
                 yield f"stream.seek(-stream.tell() & ({field.alignment} - 1), {io.SEEK_CUR})"
 
         for field in self.fields:
@@ -521,6 +530,7 @@ class _ReadSourceGenerator(_SourceGenerator):
         yield from flush()
 
         if self.align:
+            self._uses_seek = True
             yield f"stream.seek(-stream.tell() & (cls.__alignment__ - 1), {io.SEEK_CUR})"
 
     def _generate_field_source(self, field: Field) -> Iterator[str]:
@@ -599,7 +609,7 @@ class _ReadSourceGenerator(_SourceGenerator):
         reads = []
         size = self._pack_fields(fields, 0, unpack, reads, self._assign_local)
 
-        lines = [f"buf = stream.read({size})", _check_eof(size)]
+        lines = [f"buf = _read_exact(stream, {size})"]
         if unpack.has_values():
             lines.append(f"data = {self._add_symbol(unpack.functions('unpack'), 'unpack')}[endian](buf)")
 
@@ -1250,11 +1260,6 @@ def _union_target(var: str) -> Callable[[Field, str], list[str]]:
 def _member_lookup(type_: str, value: str) -> str:
     """Return the code to get the enum or flag member for a value into ``_member``."""
     return f"if (_member := {type_}._value2member_map_.get({value})) is None: _member = _type_call({type_}, {value})"
-
-
-def _check_eof(size: int) -> str:
-    """Return the code to raise an ``EOFError`` if fewer than ``size`` bytes were read into ``buf``."""
-    return f'if len(buf) != {size}: raise EOFError(f"Read {{len(buf)}} bytes, but expected {size}")'
 
 
 def _block(lines: list[str]) -> str:
