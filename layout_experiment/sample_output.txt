@@ -1,0 +1,150 @@
+==============================================================================
+1) FIELD OFFSET / SIZE TABLES (independent target-ABI engine)
+==============================================================================
+
+[32-bit ILP32] policy=packed   sizeof(Rec)=14  sizeof(Block=Rec[2])=28
+    magic              offset=0x00  size=4  align=4
+    next               offset=0x04  size=4  align=4
+    union              offset=0x08  size=4  align=4
+    count              offset=0x0c  size=2  align=2
+
+[32-bit ILP32] policy=natural  sizeof(Rec)=16  sizeof(Block=Rec[2])=32
+    magic              offset=0x00  size=4  align=4
+    next               offset=0x04  size=4  align=4
+    union              offset=0x08  size=4  align=4
+    count              offset=0x0c  size=2  align=2
+
+[32-bit ILP32] policy=explicit sizeof(Rec)=16  sizeof(Block=Rec[2])=32
+    magic              offset=0x00  size=4  align=4
+    next               offset=0x04  size=4  align=4
+    union              offset=0x08  size=4  align=4
+    count              offset=0x0c  size=2  align=2
+    pad                offset=0x0e  size=2  align=1
+
+[64-bit LP64] policy=packed   sizeof(Rec)=18  sizeof(Block=Rec[2])=36
+    magic              offset=0x00  size=4  align=4
+    next               offset=0x04  size=8  align=8
+    union              offset=0x0c  size=4  align=4
+    count              offset=0x10  size=2  align=2
+
+[64-bit LP64] policy=natural  sizeof(Rec)=24  sizeof(Block=Rec[2])=48
+    magic              offset=0x00  size=4  align=4
+    pad                offset=0x04  size=4  align=1
+    next               offset=0x08  size=8  align=8
+    union              offset=0x10  size=4  align=4
+    count              offset=0x14  size=2  align=2
+
+[64-bit LP64] policy=explicit sizeof(Rec)=24  sizeof(Block=Rec[2])=48
+    magic              offset=0x00  size=4  align=4
+    pad                offset=0x04  size=4  align=1
+    next               offset=0x08  size=8  align=8
+    union              offset=0x10  size=4  align=4
+    count              offset=0x14  size=2  align=2
+    pad                offset=0x16  size=2  align=1
+
+==============================================================================
+2) HAND-CHECKABLE BYTE DIAGRAM (LP64 natural; CC = padding sentinel)
+==============================================================================
+  00:item[0].magic | 01:item[0].magic | 02:item[0].magic | 03:item[0].magic | 04:item[0].pad04 (padding) | 05:item[0].pad04 (padding) | 06:item[0].pad04 (padding) | 07:item[0].pad04 (padding) | 08:item[0].next | 09:item[0].next | 0a:item[0].next | 0b:item[0].next | 0c:item[0].next | 0d:item[0].next | 0e:item[0].next | 0f:item[0].next
+  10:item[0].anon.raw | 11:item[0].anon.raw | 12:item[0].anon.raw | 13:item[0].anon.raw | 14:item[0].count | 15:item[0].count | 16:implicit tail padding | 17:implicit tail padding | 18:item[1].magic | 19:item[1].magic | 1a:item[1].magic | 1b:item[1].magic | 1c:item[1].pad04 (padding) | 1d:item[1].pad04 (padding) | 1e:item[1].pad04 (padding) | 1f:item[1].pad04 (padding)
+  20:item[1].next | 21:item[1].next | 22:item[1].next | 23:item[1].next | 24:item[1].next | 25:item[1].next | 26:item[1].next | 27:item[1].next | 28:item[1].anon.raw | 29:item[1].anon.raw | 2a:item[1].anon.raw | 2b:item[1].anon.raw | 2c:item[1].count | 2d:item[1].count | 2e:implicit tail padding | 2f:implicit tail padding
+
+==============================================================================
+3) ENGINE vs dissect.cstruct OFFSET CROSS-CHECK (both execution paths)
+==============================================================================
+  32-bit packed    interpreted  Rec=14  Block=28  match=True
+  32-bit packed    compiled     Rec=14  Block=28  match=True
+  32-bit natural   interpreted  Rec=16  Block=32  match=True
+  32-bit natural   compiled     Rec=16  Block=32  match=True
+  32-bit explicit  interpreted  Rec=16  Block=32  match=True
+  32-bit explicit  compiled     Rec=16  Block=32  match=True
+  64-bit packed    interpreted  Rec=18  Block=36  match=True
+  64-bit packed    compiled     Rec=18  Block=36  match=True
+  64-bit natural   interpreted  Rec=24  Block=48  match=True
+  64-bit natural   compiled     Rec=24  Block=48  match=True
+  64-bit explicit  interpreted  Rec=24  Block=48  match=True
+  64-bit explicit  compiled     Rec=24  Block=48  match=True
+  -> 0 mismatches; definition drives both paths identically.
+
+==============================================================================
+4) NESTED ARRAY: offset of item[1] and its fields
+==============================================================================
+
+  32-bit packed    sizeof(Rec)=14 -> item[1] starts at 0x0e
+      magic                        abs offset 0x0e  value=0x11101f1e
+      next                         abs offset 0x12  value=0x15141312
+      __anonymous_0__.type         abs offset 0x16  value=0x19181716
+      __anonymous_0__.info.id      abs offset 0x16  value=0x1716
+      __anonymous_0__.info.flags   abs offset 0x18  value=0x1918
+      count                        abs offset 0x1a  value=0x1b1a
+
+  32-bit natural   sizeof(Rec)=16 -> item[1] starts at 0x10
+      magic                        abs offset 0x10  value=0x13121110
+      next                         abs offset 0x14  value=0x17161514
+      __anonymous_0__.type         abs offset 0x18  value=0x1b1a1918
+      __anonymous_0__.info.id      abs offset 0x18  value=0x1918
+      __anonymous_0__.info.flags   abs offset 0x1a  value=0x1b1a
+      count                        abs offset 0x1c  value=0x1d1c
+
+  32-bit explicit  sizeof(Rec)=16 -> item[1] starts at 0x10
+      magic                        abs offset 0x10  value=0x13121110
+      next                         abs offset 0x14  value=0x17161514
+      __anonymous_0__.type         abs offset 0x18  value=0x1b1a1918
+      __anonymous_0__.info.id      abs offset 0x18  value=0x1918
+      __anonymous_0__.info.flags   abs offset 0x1a  value=0x1b1a
+      count                        abs offset 0x1c  value=0x1d1c
+
+  64-bit packed    sizeof(Rec)=18 -> item[1] starts at 0x12
+      magic                        abs offset 0x12  value=0x15141312
+      next                         abs offset 0x16  value=0x1d1c1b1a19181716
+      __anonymous_0__.type         abs offset 0x1e  value=0x11101f1e
+      __anonymous_0__.info.id      abs offset 0x1e  value=0x1f1e
+      __anonymous_0__.info.flags   abs offset 0x20  value=0x1110
+      count                        abs offset 0x22  value=0x1312
+
+  64-bit natural   sizeof(Rec)=24 -> item[1] starts at 0x18
+      magic                        abs offset 0x18  value=0x1b1a1918
+      next                         abs offset 0x20  value=0x1716151413121110
+      __anonymous_0__.type         abs offset 0x28  value=0x1b1a1918
+      __anonymous_0__.info.id      abs offset 0x28  value=0x1918
+      __anonymous_0__.info.flags   abs offset 0x2a  value=0x1b1a
+      count                        abs offset 0x2c  value=0x1d1c
+
+  64-bit explicit  sizeof(Rec)=24 -> item[1] starts at 0x18
+      magic                        abs offset 0x18  value=0x1b1a1918
+      next                         abs offset 0x20  value=0x1716151413121110
+      __anonymous_0__.type         abs offset 0x28  value=0x1b1a1918
+      __anonymous_0__.info.id      abs offset 0x28  value=0x1918
+      __anonymous_0__.info.flags   abs offset 0x2a  value=0x1b1a
+      count                        abs offset 0x2c  value=0x1d1c
+
+==============================================================================
+5) ISOLATING THE THREE CONTRIBUTING FACTORS
+==============================================================================
+
+  pointer width alone (packed 32->64)
+    magic              0x00 -> 0x00  (delta +0, size 4 -> 4)
+    next               0x04 -> 0x04  (delta +0, size 4 -> 8)
+    __anonymous_0__    0x08 -> 0x0c  (delta +4, size 4 -> 4)
+    count              0x0c -> 0x10  (delta +4, size 2 -> 2)
+
+  alignment alone (64 packed->natural)
+    magic              0x00 -> 0x00  (delta +0, size 4 -> 4)
+    next               0x04 -> 0x08  (delta +4, size 8 -> 8)
+    __anonymous_0__    0x0c -> 0x10  (delta +4, size 4 -> 4)
+    count              0x10 -> 0x14  (delta +4, size 2 -> 2)
+
+  union size (max of type/Inner/raw, rounded to union align 4):
+    32-bit packed union size=4  64-bit natural union size=4 (unchanged across ABIs)
+
+==============================================================================
+6) THE BUG: inheriting the HOST default pointer width
+==============================================================================
+  analysis host pointer width: 64-bit (cstruct() default pointer follows sys.maxsize)
+  wrong model (host default): next@8 size=24
+  right model (pinned u32) : next@4 size=16
+  parsed 'count': wrong=0x0 (reads union/ptr bytes) correct=0x4444
+  parsed 'next' : wrong=0x444433333333 (8 bytes at off 8) correct=0x22222222 (4 bytes at off 4)
+  parsed union : wrong.type=0x0 correct.type=0x33333333
+
+All checks passed.
