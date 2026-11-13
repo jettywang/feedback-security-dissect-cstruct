@@ -8,4 +8,5 @@ __pycache__/
 .pytest_cache/
 tests/_docs/api
 tests/_docs/build
+tests/_data/bitfield_fuzz_crashes/
 .tox/
