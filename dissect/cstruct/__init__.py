@@ -10,6 +10,7 @@ from dissect.cstruct.exception import (
     ResolveError,
 )
 from dissect.cstruct.expression import Expression
+from dissect.cstruct.schema import Schema
 from dissect.cstruct.types import (
     LEB128,
     Array,
@@ -71,6 +72,7 @@ __all__ = [
     "ParserError",
     "Pointer",
     "ResolveError",
+    "Schema",
     "Structure",
     "Union",
     "Void",

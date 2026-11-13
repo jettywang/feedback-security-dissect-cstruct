@@ -316,10 +316,20 @@ class _overload:
 
 
 def _instance_dumps(self: BaseType, *, endian: AllowedEndianness | None = None) -> bytes:
+    from dissect.cstruct.schema import schema_class
+
+    cls = schema_class(self)
+    if cls is not None:
+        return MetaType.dumps(cls, self, endian=endian)
     return MetaType.dumps(self.__class__, self, endian=endian)
 
 
 def _instance_write(self: BaseType, stream: BinaryIO, *, endian: AllowedEndianness | None = None) -> int:
+    from dissect.cstruct.schema import schema_class
+
+    cls = schema_class(self)
+    if cls is not None:
+        return MetaType.write(cls, stream, self, endian=endian)
     return MetaType.write(self.__class__, stream, self, endian=endian)
 
 
@@ -443,7 +453,30 @@ class BaseArray(BaseType):
 class Array(list[T], BaseArray):
     @classmethod
     def _read(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> list[T]:
+        from dissect.cstruct.schema import _bind_array, instance_schema
+
+        cs = getattr(cls, "__cs__", None)
+        if cs is not None and hasattr(cs, "_parse_context"):
+            with cs._parse_context() as schema:
+                value = type.__call__(cls, super()._read(stream, context=context, endian=endian))
+                if instance_schema(value) is None:
+                    _bind_array(value, schema)
+                return value
+
         return type.__call__(cls, super()._read(stream, context=context, endian=endian))
+
+    def dumps(self, *, endian: AllowedEndianness | None = None) -> bytes:
+        """Dump the array using each element's parsed definition version."""
+        from dissect.cstruct.schema import instance_schema
+
+        if instance_schema(self) is None:
+            return MetaType.dumps(self.__class__, self, endian=endian)
+
+        endian = normalize_endianness(endian) if endian is not None else self.__class__.__cs__.endian
+        out = BytesIO()
+        for item in self:
+            item.write(out, endian=endian)
+        return out.getvalue()
 
 
 _BUFFER_TYPES = (bytes, memoryview, bytearray)

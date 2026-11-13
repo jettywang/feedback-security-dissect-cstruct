@@ -9,10 +9,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 ### Added
 
 - Declarative syntax for structures and unions in `dissect.cstruct.declarative`, using classes with type annotations.
+- Definition version boundaries for lazy compilation: `cstruct.snapshot()` returns an immutable :class:`Schema`, `cstruct.pin()` makes a version the default for new parses, `cstruct.unpin()` returns to the latest definitions and `cstruct.recompile()` explicitly compiles all structures. `cstruct.revision` and `Schema.digest` identify definition versions.
+- Parsed values remember the version they were read with, so `dumps()` and nested values keep that version after a nested type or union is redefined. Definitions are never changed halfway through a parse; doing so raises `Error`.
 
 ### Changed
 
 - Optimize storage of field sizes.
+- New parses use the latest definitions by default, as before; only `pin()` or `snapshot()` freeze a version explicitly.
 - Rename `_sizes` property of `Structure` to `__sizes__`.
 - Rename `_values` property of `Structure` to `__values__`.
 - Added `load` argument to `cstruct` class, allowing direct initialization with a definition (i.e. `cstruct(cdef)` instead of `cstruct().load(cdef)`. Other arguments to `cstruct` are now keyword only.

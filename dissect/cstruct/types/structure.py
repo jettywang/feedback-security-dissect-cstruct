@@ -76,9 +76,31 @@ class StructureMetaType(MetaType):
         return super().__new__(metacls, name, bases, classdict, **kwargs)
 
     def __call__(cls, *args, **kwargs) -> Self:  # type: ignore
+        # A pinned or explicitly snapshotted class reads with the frozen definition. The default path reads with
+        # the live class and binds the definition boundary for later serialization.
+        cs = getattr(cls, "__cs__", None)
+        if cs is not None and isinstance(cs, MetaType):
+            # Snapshot classes are immutable and read directly.
+            return type.__call__(cls, *args, **kwargs)
+
+        if cs is not None and getattr(cs, "_pinned_schema", None) is not None:
+            pinned = cs._pinned_schema
+            target = pinned._cache.get(cls)
+            if target is None:
+                target = pinned._type_for(cls)
+            return target(*args, **kwargs)
+
         if len(args) == 1 and not kwargs:
             # Fast paths for the most common cases
             obj = args[0]
+            context = getattr(cs, "_parse_context", None) if cs is not None else None
+            is_parse = type(obj) in _BUFFER_TYPES or (hasattr(obj, "read") and not isinstance(obj, cls))
+            if context is not None and is_parse:
+                with context() as schema:
+                    parsed = cls._read(io.BytesIO(obj) if type(obj) in _BUFFER_TYPES else obj, endian=cls.__cs__.endian)
+                    _bind_parse(cls, parsed, schema)
+                    return parsed
+
             if type(obj) in _BUFFER_TYPES:
                 return cls._read(io.BytesIO(obj), endian=cls.__cs__.endian)
 
@@ -88,9 +110,12 @@ class StructureMetaType(MetaType):
         if not args and not kwargs:
             obj = type.__call__(cls)
             object.__setattr__(obj, "__dynamic_sizes__", {})
+            _bind_current_schema(obj, cls)
             return obj
 
-        return super().__call__(*args, **kwargs)
+        obj = super().__call__(*args, **kwargs)
+        _bind_current_schema(obj, cls)
+        return obj
 
     def _update_fields(
         cls, fields: list[Field], align: bool = False, classdict: dict[str, Any] | None = None
@@ -286,6 +311,7 @@ class StructureMetaType(MetaType):
         # This is faster than calling cls() and bypasses the metaclass __call__ method
         obj = type.__call__(cls, **result)
         obj.__dynamic_sizes__ = sizes
+        _bind_instance_schema(obj, cls)
         return obj
 
     def _read_0(cls, stream: BinaryIO, *, context: dict[str, Any] | None = None, endian: Endianness) -> list[Self]:  # type: ignore
@@ -355,6 +381,7 @@ class StructureMetaType(MetaType):
         return stream.tell() - struct_start
 
     def add_field(cls, name: str, type_: type[BaseType], bits: int | None = None, offset: int | None = None) -> None:
+        _ensure_not_parsing(cls.__cs__)
         field = Field(name, type_, bits=bits, offset=offset)
         cls.__fields__.append(field)
 
@@ -370,11 +397,30 @@ class StructureMetaType(MetaType):
             cls.commit()
             cls.__updating__ = False
 
-    def commit(cls) -> None:
+    def commit(cls, *, changed: bool = True) -> None:
+        """Commit changes to the field definition and rebuild the derived state.
+
+        Args:
+            changed: Whether the field definition changed. Used by snapshot types to avoid bumping the definition
+                revision during reconstruction of an already fixed definition.
+        """
+        if changed:
+            _ensure_not_parsing(cls.__cs__)
+
         classdict = cls._update_fields(cls.__fields__, cls.__align__)
 
         for key, value in classdict.items():
             setattr(cls, key, value)
+
+        if changed:
+            cs = cls.__cs__
+            touch = getattr(cs, "_touch", None)
+            if touch is not None:
+                touch()
+
+            # A nested structure changed: drop any compiled methods of outer structures that inline it. Their next
+            # read recompiles from the current definitions.
+            _revalidate_structures(cs, cls)
 
         if cls.__compiled__:
             # If the previous class was compiled try to compile this too
@@ -539,6 +585,70 @@ class Structure(BaseType, metaclass=StructureMetaType):
         return ChainMap(self.__class__.__static_sizes__, getattr(self, "__dynamic_sizes__", {}))
 
 
+def _revalidate_structures(cs: Any, changed: type[BaseType]) -> None:
+    """Recompile all compiled structures that reference ``changed``, so none keep an outdated inline snapshot."""
+    from dissect.cstruct import compiler
+
+    for type_ in getattr(cs, "types", {}).values():
+        if not isinstance(type_, StructureMetaType) or type_ is changed or not type_.__compiled__:
+            continue
+        if _references(type_, changed, set()):
+            compiler.compile_structure(type_)
+
+
+def _references(type_: type[BaseType], target: type[BaseType], seen: set[type[BaseType]]) -> bool:
+    """Return whether ``type_`` references ``target`` in any field type, including arrays and pointers."""
+    if type_ in seen:
+        return False
+    seen.add(type_)
+
+    if type_ is target:
+        return True
+    if isinstance(type_, BaseArray) or issubclass(type_, Pointer):
+        return _references(type_.__type__, target, seen)
+    if isinstance(type_, StructureMetaType):
+        return any(_references(field.type, target, seen) for field in type_.__fields__)
+    return False
+
+
+def _ensure_not_parsing(cs: Any) -> None:
+    """Raise when a definition changes while a parse is in progress."""
+    if cs is not None and getattr(cs, "_parse_depth", 0) > 0:
+        from dissect.cstruct.exception import Error
+
+        raise Error("Definitions changed during an active parse; finish the parse before changing definitions")
+
+
+def _bind_parse(cls: type[BaseType], obj: Any, schema: Any) -> Any:
+    """Bind a parsed value to the definition version captured for this parse."""
+    from dissect.cstruct.schema import _bind, _bind_nested, instance_schema
+
+    if schema is not None and instance_schema(obj) is None:
+        _bind(obj, schema)
+        _bind_nested(obj, schema)
+    return obj
+
+
+def _bind_instance_schema(obj: BaseType, cls: type[BaseType]) -> None:
+    """Bind a default-constructed snapshot instance to its definition version."""
+    cs = getattr(cls, "__cs__", None)
+    if cs is not None and hasattr(cs, "_snapshot_classes"):
+        object.__setattr__(obj, "__schema__", cs)
+
+
+def _bind_current_schema(obj: Any, cls: type[BaseType]) -> None:
+    """Bind a user-constructed value to the snapshot its class belongs to, if any."""
+    _bind_instance_schema(obj, cls)
+    cs = getattr(cls, "__cs__", None)
+    if cs is None or not hasattr(cs, "_parse_context"):
+        return
+    from dissect.cstruct.schema import _bind
+
+    schema = getattr(cs, "_active_schema", None) or getattr(cs, "_pinned_schema", None)
+    if schema is not None:
+        _bind(obj, schema)
+
+
 class StructureValuesProxy(MutableMapping):
     """A proxy for the values of fields of a Structure."""
 
@@ -673,6 +783,7 @@ class UnionMetaType(StructureMetaType):
             object.__setattr__(obj, "_buf", buf)
             object.__setattr__(obj, "_endian", endian)
             obj._proxify()
+            _bind_instance_schema(obj, cls)
             return obj
         else:
             result = {}
@@ -694,6 +805,7 @@ class UnionMetaType(StructureMetaType):
 
         # Proxify any nested structures
         obj._proxify()
+        _bind_instance_schema(obj, cls)
 
         return obj
 

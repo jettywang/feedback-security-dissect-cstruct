@@ -36,6 +36,7 @@ if TYPE_CHECKING:
     from collections.abc import Generator, Iterable
     from typing import TypeAlias
 
+    from dissect.cstruct.schema import Schema
     from dissect.cstruct.types import (
         Array,
         Field,
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
 
 
 T = TypeVar("T", bound=BaseType)
+
+_MISSING = object()
 
 AllowedEndianness: TypeAlias = Literal["little", "big", "network", "<", ">", "!", "@", "="]
 Endianness: TypeAlias = Literal["<", ">", "!", "@", "="]
@@ -65,6 +68,13 @@ class cstruct:
         self.consts: dict[str, int | str | bytes] = {}
         self.types: dict[str, type[BaseType]] = {}
         self.includes: list[str] = []
+
+        # Definition lifecycle bookkeeping. The revision changes when a definition is added or changed.
+        self._definition_revision = 0
+        self._tracking = False
+        self._pinned_schema: Schema | None = None
+        self._active_schema: Schema | None = None
+        self._parse_depth = 0
 
         # fmt: off
         initial_types = {
@@ -203,6 +213,9 @@ class cstruct:
         pointer = pointer or ("uint64" if sys.maxsize > 2**32 else "uint32")
         self.pointer: type[BaseType] = self.resolve(pointer)
         self._anonymous_count = 0
+        self._tracking = True
+        self._current_schema: Schema | None = None
+        self._current_schema_key: tuple[Any, ...] | None = None
 
         # Array types are frequently created at runtime (e.g. ``cs.uint32[count]``), so cache them per instance
         self._make_array_cached = lru_cache(maxsize=4096)(self._make_array_cached)
@@ -244,6 +257,100 @@ class cstruct:
 
         raise AttributeError(f"'{type(self).__name__}' object has no attribute {attr!r}")
 
+    @property
+    def revision(self) -> int:
+        """The current definition revision.
+
+        The revision starts at zero and increases when a definition changes, for example through :meth:`load`,
+        :meth:`add_type` or a structure field update. It is a cheap way to tell whether the definitions of an
+        instance changed since a schema was taken.
+        """
+        return self._definition_revision
+
+    def snapshot(self) -> Schema:
+        """Create an immutable snapshot of the current definitions."""
+        key = (self._definition_revision, self.endian, self.pointer)
+        if self._current_schema is not None and self._current_schema_key == key:
+            return self._current_schema
+
+        from dissect.cstruct.schema import Schema
+
+        schema = Schema(self)
+        self._current_schema = schema
+        self._current_schema_key = key
+        return schema
+
+    def pin(self) -> Schema:
+        """Pin the current definitions as the default for this instance and return the snapshot.
+
+        After pinning, attribute access and ``load`` still refer to this live instance, but new parses through
+        ``Type(data)`` use the pinned definitions. This mirrors the documented default behaviour while allowing a
+        caller to explicitly choose a definition version. Use :meth:`unpin` to return to the latest definitions.
+        """
+        schema = self.snapshot()
+        self._pinned_schema = schema
+        return schema
+
+    def unpin(self) -> None:
+        """Use the latest definitions for new parses again."""
+        self._pinned_schema = None
+
+    @property
+    def pinned(self) -> Schema | None:
+        """The pinned schema, or ``None`` when new parses use the latest definitions."""
+        return self._pinned_schema
+
+    @contextmanager
+    def _parse_context(self) -> Generator[Schema]:
+        """Pin the definition version used for one outermost parse.
+
+        The default path captures a boundary snapshot for tagging parsed values and detecting changes during the
+        parse, but reads with the live classes. An explicit pin uses the frozen snapshot classes instead.
+        """
+        if self._active_schema is not None:
+            yield self._active_schema
+            return
+
+        schema = self._pinned_schema or self.snapshot()
+        self._active_schema = schema
+        self._parse_depth += 1
+        try:
+            yield schema
+        finally:
+            self._parse_depth -= 1
+            self._active_schema = None
+
+    def recompile(self) -> cstruct:
+        """Explicitly compile all structure and union types of this instance.
+
+        Lazy compilation normally compiles a structure on first use. This method forces that work now, so that a
+        compile failure surfaces at the point where the caller chose the definition version. It also recompiles
+        already compiled structures against their current fields.
+        """
+        from dissect.cstruct import compiler
+
+        for type_ in self.types.values():
+            if isinstance(type_, Structure):
+                compiler.compile_structure(type_)
+        return self
+
+    def _touch(self) -> None:
+        """Mark the definitions as changed."""
+        if not self._tracking:
+            return
+
+        if self._parse_depth > 0:
+            from dissect.cstruct.exception import Error
+
+            raise Error("Definitions changed during an active parse; finish the parse before changing definitions")
+
+        self._definition_revision += 1
+        self._current_schema = None
+        self._current_schema_key = None
+        from dissect.cstruct.schema import on_definition_change
+
+        on_definition_change(self)
+
     def __copy__(self) -> cstruct:
         cs = cstruct(endian=self.endian, pointer=self.pointer.__name__)
         cs._anonymous_count = self._anonymous_count
@@ -254,6 +361,11 @@ class cstruct:
             new_type = copy.copy(type_)
             new_type.__cs__ = cs
             cs.add_type(name, new_type, replace=True)
+
+        cs._definition_revision = self._definition_revision
+        cs._current_schema = self._current_schema
+        cs._current_schema_key = self._current_schema_key
+        # A pinned schema belongs to the source instance's type registry, so the copy starts unpinned.
 
         for name, value in self.consts.items():
             cs.add_const(name, value)
@@ -290,6 +402,9 @@ class cstruct:
         typeobj = self.resolve(type_)
         if not replace and (existing := self.types.get(name)) is not None and existing is not typeobj:
             raise ValueError(f"Duplicate type: {name}")
+
+        if self.types.get(name) is not typeobj:
+            self._touch()
 
         self.types[name] = typeobj
         self._add_attr(name, typeobj)
@@ -341,6 +456,8 @@ class cstruct:
             name: Name of the constant to be added.
             value: The value of the constant.
         """
+        if self.consts.get(name, _MISSING) != value:
+            self._touch()
         self.consts[name] = value
         self._add_attr(name, value)
 
@@ -355,6 +472,7 @@ class cstruct:
         """
         del self.consts[name]
         self.__dict__.pop(name, None)
+        self._touch()
 
     def load(self, definition: str, deftype: int | None = None, **kwargs) -> cstruct:
         """Parse structures from the given definitions using the given definition type.

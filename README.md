@@ -105,6 +105,55 @@ By default, all structures are compiled into classes that provide optimised perf
 
 More examples can be found in the `examples` directory.
 
+### Definition versions and lazy compilation
+
+Definitions can change after a structure was first used, for example by loading an updated definition, replacing a
+nested type or adding a field. Compilation is lazy, so without a version boundary an already compiled outer structure
+and a not yet compiled nested structure could end up using different definitions. cstruct makes the boundary explicit:
+
+```python
+from dissect.cstruct import cstruct
+
+record_def = """
+struct header { uint8 magic[4]; uint16 count; };
+struct record { header head; uint8 body[6]; };
+"""
+
+v1 = cstruct().load(record_def)
+
+# A snapshot is an immutable definition version. Reads through it always use this version.
+pinned = v1.snapshot()
+record = pinned.record(b"SEC1\x02\x00ABCDEF")
+assert record.dumps() == b"SEC1\x02\x00ABCDEF"
+
+# Change the live definition. The old value keeps its version for dumps, arrays and unions.
+v1.header.add_field("flags", v1.uint16)
+assert record.dumps() == b"SEC1\x02\x00ABCDEF"
+assert [field.name for field in record.head.__class__.__fields__] == ["magic", "count"]
+
+# Pin a definition version before changing anything for subsequent Type(data) parses, until unpin().
+v2 = cstruct().load(record_def)
+v2.pin()
+v2.header.add_field("extra", v2.uint8)
+assert v2.record(b"SEC1\x02\x00ABCDEF").head.count == 2
+assert [field.name for field in v2.record(b"SEC1\x02\x00ABCDEF").head.__class__.__fields__] == [
+    "magic",
+    "count",
+]
+v2.unpin()
+
+# Explicitly compile the chosen version instead of waiting for first use.
+pinned.recompile()
+```
+
+The default behaviour is unchanged: without `snapshot()` or `pin()`, each `Type(data)` parse uses the definitions at
+the moment that parse starts. Values returned by an earlier parse keep that version for `dumps()` and nested values, so
+redefining a nested type or union cannot change an old instance midway. Changing a definition while a parse is in
+progress raises `Error` rather than mixing layouts.
+
+`cstruct.revision` increases on definition changes, while `Schema.digest` is a stable content digest of a definition
+version. Use the revision to quickly detect changes and the digest to identify an exact version.
+
 ## Features
 ### Structure parsing
 Write simple C-like structures and use them to parse binary data, as can be seen in the examples.
